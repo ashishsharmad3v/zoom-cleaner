@@ -2,30 +2,32 @@ import logging
 from typing import List, Dict
 from concurrent.futures import ThreadPoolExecutor
 import time
-from .openai_processor import OpenAIProcessor
-from .langchain_integration import LangChainTranscriptCleaner
-from .utils import merge_segments_with_overlap, find_overlap
-from config.settings import CHUNK_SIZE, CHUNK_OVERLAP, MAX_WORKERS
+from .custom_llm import CustomOpenAILLM
+from .processor import TranscriptProcessor
+from .utils import merge_segments_with_overlap
+from config.settings import MAX_WORKERS
 
 logger = logging.getLogger(__name__)
 
 class ZoomTranscriptCleaner:
-    def __init__(self, use_langchain: bool = True):
-        self.use_langchain = use_langchain
-        self.openai_processor = OpenAIProcessor()
-        self.langchain_processor = LangChainTranscriptCleaner() if use_langchain else None
-        self.context_memory = {}
+    def __init__(self, model_name: str = "gpt-3.5-turbo", temperature: float = 0.1):
+        self.llm = CustomOpenAILLM(
+            model_name=model_name,
+            temperature=temperature
+        )
+        self.processor = TranscriptProcessor(self.llm)
+        logger.info(f"Initialized ZoomTranscriptCleaner with {model_name}")
     
     def clean_transcript(self, transcript_text: str) -> str:
         """Main method to clean entire transcript"""
         logger.info("Starting transcript cleaning process...")
         
-        # Step 1: Chunk the transcript
-        logger.info("Chunking transcript...")
-        chunks = self._chunk_transcript(transcript_text)
+        # Step 1: Chunk the transcript using LangChain
+        logger.info("Chunking transcript with LangChain...")
+        chunks = self.processor.chunk_transcript(transcript_text)
         logger.info(f"Created {len(chunks)} chunks")
         
-        # Step 2: Process chunks
+        # Step 2: Process chunks in parallel
         logger.info("Processing chunks...")
         processed_chunks = self._process_chunks_parallel(chunks)
         
@@ -43,56 +45,6 @@ class ZoomTranscriptCleaner:
         logger.info("Transcript cleaning completed successfully!")
         return final_transcript
     
-    def _chunk_transcript(self, transcript: str) -> List[Dict]:
-        """Split transcript into chunks"""
-        lines = transcript.split('\n')
-        chunks = []
-        current_chunk = []
-        current_length = 0
-        chunk_index = 0
-        
-        i = 0
-        while i < len(lines):
-            line = lines[i]
-            line_length = len(line)
-            
-            if current_length + line_length <= CHUNK_SIZE:
-                current_chunk.append(line)
-                current_length += line_length
-                i += 1
-            else:
-                chunk_text = '\n'.join(current_chunk)
-                chunks.append({
-                    'index': chunk_index,
-                    'text': chunk_text,
-                    'start_line': max(0, i - len(current_chunk)),
-                    'end_line': i
-                })
-                
-                # Calculate overlap for next chunk
-                overlap_lines = []
-                overlap_length = 0
-                j = len(current_chunk) - 1
-                while j >= 0 and overlap_length < CHUNK_OVERLAP:
-                    overlap_lines.insert(0, current_chunk[j])
-                    overlap_length += len(current_chunk[j])
-                    j -= 1
-                
-                current_chunk = overlap_lines
-                current_length = overlap_length
-                chunk_index += 1
-        
-        if current_chunk:
-            chunk_text = '\n'.join(current_chunk)
-            chunks.append({
-                'index': chunk_index,
-                'text': chunk_text,
-                'start_line': max(0, len(lines) - len(current_chunk)),
-                'end_line': len(lines)
-            })
-        
-        return chunks
-    
     def _process_chunks_parallel(self, chunks: List[Dict]) -> List[Dict]:
         """Process chunks in parallel"""
         processed_chunks = []
@@ -101,7 +53,7 @@ class ZoomTranscriptCleaner:
             futures = []
             
             for chunk in chunks:
-                context = self._get_context_for_chunk(chunk['index'])
+                context = self.processor.get_context_for_segment(chunk['index'])
                 future = executor.submit(self._process_single_chunk, chunk, context)
                 futures.append((future, chunk))
             
@@ -122,30 +74,19 @@ class ZoomTranscriptCleaner:
     
     def _process_single_chunk(self, chunk: Dict, context: str) -> Dict:
         """Process a single chunk"""
-        if self.use_langchain:
-            result = self.langchain_processor.process_segment(chunk['text'], context)
-            if result["success"]:
-                processed_text = result["grammar_correction"].get("processed_text", chunk['text'])
-                speakers = result["grammar_correction"].get("speakers_identified", [])
-                context_points = result["grammar_correction"].get("key_context_points", [])
-            else:
-                # Fallback to basic processing
-                processed_text = chunk['text']
-                speakers = []
-                context_points = []
+        result = self.processor.process_segment(chunk['text'], context)
+        
+        if result["success"]:
+            processed_text = result["grammar_correction"].get("processed_text", chunk['text'])
+            speakers = result["grammar_correction"].get("speakers_identified", [])
+            context_points = result["grammar_correction"].get("key_context_points", [])
         else:
-            result = self.openai_processor.correct_grammar(chunk['text'], context)
-            if result["success"]:
-                processed_text = result["processed_text"]
-                speakers = result["speakers"]
-                context_points = result["context_points"]
-            else:
-                processed_text = chunk['text']
-                speakers = []
-                context_points = []
+            processed_text = chunk['text']
+            speakers = []
+            context_points = []
         
         # Update context memory
-        self._update_context(chunk['index'], context_points)
+        self.processor.update_context(chunk['index'], context_points)
         
         return {
             'index': chunk['index'],
@@ -154,21 +95,6 @@ class ZoomTranscriptCleaner:
             'context_points': context_points
         }
     
-    def _update_context(self, chunk_index: int, context_points: List[str]):
-        """Update context memory"""
-        self.context_memory[chunk_index] = context_points
-        if len(self.context_memory) > 10:
-            oldest_key = min(self.context_memory.keys())
-            del self.context_memory[oldest_key]
-    
-    def _get_context_for_chunk(self, chunk_index: int) -> str:
-        """Get context for a specific chunk"""
-        context_points = []
-        for i in range(max(0, chunk_index - 3), chunk_index):
-            if i in self.context_memory:
-                context_points.extend(self.context_memory[i])
-        return "\n".join(context_points[-5:])
-    
     def _assemble_transcript(self, processed_chunks: List[Dict]) -> str:
         """Assemble processed chunks into final transcript"""
         segments = [chunk['processed_text'] for chunk in processed_chunks]
@@ -176,7 +102,4 @@ class ZoomTranscriptCleaner:
     
     def _perform_final_qa(self, original: str, processed: str) -> Dict:
         """Perform final quality assurance"""
-        if self.use_langchain:
-            return self.langchain_processor.quality_check(original, processed)
-        else:
-            return self.openai_processor.quality_assurance(original, processed)
+        return self.processor.quality_check(original, processed)

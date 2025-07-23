@@ -1,9 +1,38 @@
 import json
 import logging
-from typing import List, Dict
 import re
+from typing import List, Dict, Tuple
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.docstore.document import Document
 
 logger = logging.getLogger(__name__)
+
+def create_langchain_documents(transcript: str) -> List[Document]:
+    """Create LangChain documents from transcript text"""
+    # Use LangChain's intelligent chunking
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=3000,
+        chunk_overlap=500,
+        length_function=len,
+        separators=["\n\n", "\n", ". ", "? ", "! ", " ", ""]
+    )
+    
+    doc = Document(
+        page_content=transcript,
+        metadata={
+            "source": "zoom_transcript",
+            "total_length": len(transcript)
+        }
+    )
+    
+    docs = text_splitter.split_documents([doc])
+    
+    # Add chunk metadata
+    for i, doc in enumerate(docs):
+        doc.metadata["chunk_index"] = i
+        doc.metadata["chunk_total"] = len(docs)
+    
+    return docs
 
 def find_overlap(text1: str, text2: str) -> str:
     """Find overlapping text between two strings"""

@@ -1,10 +1,10 @@
-# Zoom Transcript Cleaner
+# Zoom Transcript Cleaner with Custom LLM
 
-A comprehensive solution for cleaning Zoom transcripts using OpenAI and LangChain.
+A comprehensive solution for cleaning Zoom transcripts using a custom LangChain LLM implementation.
 
 ## Features
-- Grammar correction using OpenAI
-- Speaker identification and grouping
+- Custom LLM implementation using LangChain Core
+- Grammar correction and speaker identification
 - Context preservation across chunks
 - Scalable processing for large documents
 - Quality assurance and validation

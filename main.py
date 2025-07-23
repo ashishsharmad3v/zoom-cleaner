@@ -14,10 +14,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def main():
-    parser = argparse.ArgumentParser(description='Clean Zoom transcripts using AI')
+    parser = argparse.ArgumentParser(description='Clean Zoom transcripts using custom LLM')
     parser.add_argument('--input', '-i', required=True, help='Input transcript file')
     parser.add_argument('--output', '-o', required=True, help='Output cleaned transcript file')
-    parser.add_argument('--use-langchain', action='store_true', help='Use LangChain integration')
+    parser.add_argument('--model', '-m', default='gpt-3.5-turbo', help='OpenAI model to use')
+    parser.add_argument('--temperature', '-t', type=float, default=0.1, help='Model temperature')
     parser.add_argument('--api-key', help='OpenAI API key')
     
     args = parser.parse_args()
@@ -43,23 +44,6 @@ def main():
             transcript_text = f.read()
         
         # Initialize cleaner
-        logger.info("Initializing transcript cleaner")
-        cleaner = ZoomTranscriptCleaner(use_langchain=args.use_langchain)
-        
-        # Clean transcript
-        logger.info("Cleaning transcript...")
-        cleaned_transcript = cleaner.clean_transcript(transcript_text)
-        
-        # Write output file
-        logger.info(f"Writing cleaned transcript to {args.output}")
-        with open(args.output, 'w', encoding='utf-8') as f:
-            f.write(cleaned_transcript)
-        
-        logger.info("Transcript cleaning completed successfully!")
-        
-    except Exception as e:
-        logger.error(f"Error processing transcript: {e}")
-        sys.exit(1)
-
-if __name__ == "__main__":
-    main()
+        logger.info(f"Initializing transcript cleaner with model {args.model}")
+        cleaner = ZoomTranscriptCleaner(
+            model_name=args.model
