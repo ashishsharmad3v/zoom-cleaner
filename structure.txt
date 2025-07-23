@@ -1,0 +1,14 @@
+zoom_transcript_cleaner/
+├── main.py
+├── transcript_cleaner/
+│   ├── __init__.py
+│   ├── core.py
+│   ├── langchain_integration.py
+│   ├── openai_processor.py
+│   └── utils.py
+├── config/
+│   └── settings.py
+├── tests/
+│   └── test_transcript_cleaner.py
+├── requirements.txt
+└── README.md
